@@ -1,7 +1,7 @@
 build:
     cargo build --release --features "full"
 
-install: build
+install:
     sudo make install TARGET=release
 
 upload: build
@@ -30,11 +30,11 @@ install-service name="ssserver" :
         sslocal)
             printf '%s\n' \
                 '{' \
-                '    "server": "localhost",' \
+                '    "server": "HOSTNAME",' \
                 '    "server_port": 18080,' \
                 '    "password": "PASSWORD",' \
                 '    "method": "2022-blake3-aes-256-gcm",' \
-                '    "transport_xor_key": "KEY"' \
+                '    "transport_xor_key": "KEY",' \
                 '    "local_address": "localhost",' \
                 '    "local_port": 1080' \
                 '}' > /tmp/config.tmp
@@ -42,7 +42,7 @@ install-service name="ssserver" :
         ssserver)
             printf '%s\n' \
                 '{' \
-                '    "server": "localhost",' \
+                '    "server": "HOSTNAME",' \
                 '    "server_port": 18080,' \
                 '    "password": "PASSWORD",' \
                 '    "method": "2022-blake3-aes-256-gcm",' \
