@@ -25,7 +25,6 @@ install-service name="ssserver" :
     service_file="/etc/systemd/system/${service_name}.service"
     config_path="/etc/rsocks/${service_name}-config.json"
     
-    echo "Creating sample config file at ${config_path}"
     sudo mkdir -p "$(dirname ${config_path})"
     case "${service_name}" in
         sslocal)
@@ -55,6 +54,7 @@ install-service name="ssserver" :
             exit 1
             ;;
     esac
+    echo "Creating sample config file: ${config_path}"
     sudo mv /tmp/config.tmp "${config_path}"
     
     echo "Creating systemd service for: ${service_name}"
