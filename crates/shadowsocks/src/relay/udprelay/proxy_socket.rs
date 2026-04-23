@@ -78,6 +78,7 @@ pub struct ProxySocket<S> {
     io: S,
     method: CipherKind,
     key: Box<[u8]>,
+    transport_xor_key: Option<Arc<[u8]>>,
     send_timeout: Option<Duration>,
     recv_timeout: Option<Duration>,
     context: SharedContext,
@@ -148,6 +149,7 @@ impl<S> ProxySocket<S> {
             io: socket,
             method,
             key,
+            transport_xor_key: svr_cfg.transport_xor_key().map(Arc::<[u8]>::from),
             send_timeout: None,
             recv_timeout: None,
             context,
@@ -190,6 +192,7 @@ where
                 &self.context,
                 self.method,
                 &self.key,
+                self.transport_xor_key.as_deref(),
                 addr,
                 control,
                 identity_keys,
@@ -204,7 +207,16 @@ where
                     key = user.key();
                 }
 
-                encrypt_server_payload(&self.context, self.method, key, addr, control, payload, send_buf)
+                encrypt_server_payload(
+                    &self.context,
+                    self.method,
+                    key,
+                    self.transport_xor_key.as_deref(),
+                    addr,
+                    control,
+                    payload,
+                    send_buf,
+                )
             }
         }
 
@@ -417,10 +429,21 @@ where
         user_manager: Option<&ServerUserManager>,
     ) -> ProtocolResult<(usize, Address, Option<UdpSocketControlData>)> {
         match self.socket_type {
-            UdpSocketType::Client => decrypt_server_payload(&self.context, self.method, &self.key, recv_buf),
-            UdpSocketType::Server => {
-                decrypt_client_payload(&self.context, self.method, &self.key, recv_buf, user_manager)
-            }
+            UdpSocketType::Client => decrypt_server_payload(
+                &self.context,
+                self.method,
+                &self.key,
+                recv_buf,
+                self.transport_xor_key.as_deref(),
+            ),
+            UdpSocketType::Server => decrypt_client_payload(
+                &self.context,
+                self.method,
+                &self.key,
+                recv_buf,
+                self.transport_xor_key.as_deref(),
+                user_manager,
+            ),
         }
     }
 

@@ -411,6 +411,8 @@ pub struct ServerConfig {
     method: CipherKind,
     /// Encryption key
     enc_key: Box<[u8]>,
+    /// Extra XOR transformation key applied on transport bytes
+    transport_xor_key: Option<Arc<[u8]>>,
     /// Handshake timeout (connect)
     timeout: Option<Duration>,
 
@@ -591,6 +593,7 @@ impl ServerConfig {
             password,
             method,
             enc_key,
+            transport_xor_key: None,
             identity_keys: Arc::new(identity_keys),
             user_manager: None,
             timeout: None,
@@ -618,6 +621,24 @@ impl ServerConfig {
         self.identity_keys = Arc::new(identity_keys);
 
         Ok(())
+    }
+
+    /// Set extra XOR transformation key for transport bytes
+    pub fn set_transport_xor_key<B>(&mut self, key: B)
+    where
+        B: Into<Vec<u8>>,
+    {
+        let key = key.into();
+        self.transport_xor_key = if key.is_empty() {
+            None
+        } else {
+            Some(Arc::<[u8]>::from(key))
+        };
+    }
+
+    /// Get extra XOR transformation key for transport bytes
+    pub fn transport_xor_key(&self) -> Option<&[u8]> {
+        self.transport_xor_key.as_deref()
     }
 
     /// Set plugin

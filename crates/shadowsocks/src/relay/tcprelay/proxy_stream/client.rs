@@ -155,6 +155,7 @@ where
             StreamType::Client,
             svr_cfg.method(),
             svr_cfg.key(),
+            svr_cfg.transport_xor_key(),
             svr_cfg.identity_keys(),
             None,
         );

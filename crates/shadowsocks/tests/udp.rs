@@ -59,8 +59,12 @@ async fn udp_tunnel_echo(
     target_addr: SocketAddr,
     password: &str,
     method: CipherKind,
+    transport_xor_key: Option<&str>,
 ) -> io::Result<()> {
-    let svr_cfg_server = ServerConfig::new(server_addr, password, method).unwrap();
+    let mut svr_cfg_server = ServerConfig::new(server_addr, password, method).unwrap();
+    if let Some(transport_xor_key) = transport_xor_key {
+        svr_cfg_server.set_transport_xor_key(transport_xor_key.as_bytes().to_vec());
+    }
     let svr_cfg_local = svr_cfg_server.clone();
 
     let ctx_server = Context::new_shared(ServerType::Server);
@@ -145,9 +149,37 @@ async fn udp_tunnel_aead() {
     let local_addr = "127.0.0.1:21101".parse::<SocketAddr>().unwrap();
     let target_addr = "127.0.0.1:21201".parse::<SocketAddr>().unwrap();
 
-    udp_tunnel_echo(server_addr, local_addr, target_addr, "pas$$", CipherKind::AES_128_GCM)
-        .await
-        .unwrap();
+    udp_tunnel_echo(
+        server_addr,
+        local_addr,
+        target_addr,
+        "pas$$",
+        CipherKind::AES_128_GCM,
+        None,
+    )
+    .await
+    .unwrap();
+}
+
+#[cfg(feature = "aead-cipher")]
+#[tokio::test]
+async fn udp_tunnel_aead_with_transport_xor() {
+    let _ = env_logger::try_init();
+
+    let server_addr = "127.0.0.1:21011".parse::<SocketAddr>().unwrap();
+    let local_addr = "127.0.0.1:21111".parse::<SocketAddr>().unwrap();
+    let target_addr = "127.0.0.1:21211".parse::<SocketAddr>().unwrap();
+
+    udp_tunnel_echo(
+        server_addr,
+        local_addr,
+        target_addr,
+        "pas$$",
+        CipherKind::AES_128_GCM,
+        Some("xor-layer"),
+    )
+    .await
+    .unwrap();
 }
 
 #[cfg(feature = "stream-cipher")]
@@ -165,6 +197,7 @@ async fn udp_tunnel_stream() {
         target_addr,
         "pas$$",
         CipherKind::AES_128_CFB128,
+        None,
     )
     .await
     .unwrap();
@@ -178,9 +211,29 @@ async fn udp_tunnel_none() {
     let local_addr = "127.0.0.1:23101".parse::<SocketAddr>().unwrap();
     let target_addr = "127.0.0.1:23201".parse::<SocketAddr>().unwrap();
 
-    udp_tunnel_echo(server_addr, local_addr, target_addr, "pas$$", CipherKind::NONE)
+    udp_tunnel_echo(server_addr, local_addr, target_addr, "", CipherKind::NONE, None)
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn udp_tunnel_none_with_transport_xor() {
+    let _ = env_logger::try_init();
+
+    let server_addr = "127.0.0.1:23011".parse::<SocketAddr>().unwrap();
+    let local_addr = "127.0.0.1:23111".parse::<SocketAddr>().unwrap();
+    let target_addr = "127.0.0.1:23211".parse::<SocketAddr>().unwrap();
+
+    udp_tunnel_echo(
+        server_addr,
+        local_addr,
+        target_addr,
+        "",
+        CipherKind::NONE,
+        Some("xor-layer"),
+    )
+    .await
+    .unwrap();
 }
 
 #[cfg(feature = "aead-cipher-2022")]
@@ -198,6 +251,7 @@ async fn udp_tunnel_aead_2022_aes() {
         target_addr,
         "D1HJFfvRIxpklHLeKvjCDQ==",
         CipherKind::AEAD2022_BLAKE3_AES_128_GCM,
+        None,
     )
     .await
     .unwrap();
@@ -218,6 +272,7 @@ async fn udp_tunnel_aead_2022_chacha20() {
         target_addr,
         "4wYfDniq4N6kMqFajRO03PPZLfPkl469eNYY9Wz0E78=",
         CipherKind::AEAD2022_BLAKE3_CHACHA20_POLY1305,
+        None,
     )
     .await
     .unwrap();

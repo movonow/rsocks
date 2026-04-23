@@ -25,6 +25,7 @@ pub struct ProxyListener {
     listener: TcpListener,
     method: CipherKind,
     key: Box<[u8]>,
+    transport_xor_key: Option<Arc<[u8]>>,
     context: SharedContext,
     user_manager: Option<Arc<ServerUserManager>>,
 }
@@ -61,6 +62,7 @@ impl ProxyListener {
             listener,
             method: svr_cfg.method(),
             key: svr_cfg.key().to_vec().into_boxed_slice(),
+            transport_xor_key: svr_cfg.transport_xor_key().map(Arc::<[u8]>::from),
             context,
             user_manager: svr_cfg.clone_user_manager(),
         }
@@ -87,6 +89,7 @@ impl ProxyListener {
             stream,
             self.method,
             &self.key,
+            self.transport_xor_key.as_deref(),
             self.user_manager.clone(),
         );
 

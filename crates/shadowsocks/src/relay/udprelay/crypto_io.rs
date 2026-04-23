@@ -60,12 +60,28 @@ pub enum ProtocolError {
 /// UDP shadowsocks protocol errors
 pub type ProtocolResult<T> = Result<T, ProtocolError>;
 
+#[inline]
+fn apply_xor(buf: &mut [u8], key: Option<&[u8]>) {
+    let Some(key) = key else {
+        return;
+    };
+
+    if key.is_empty() {
+        return;
+    }
+
+    for (idx, byte) in buf.iter_mut().enumerate() {
+        *byte ^= key[idx % key.len()];
+    }
+}
+
 /// Encrypt `Client -> Server` payload into ShadowSocks UDP encrypted packet
 #[allow(clippy::too_many_arguments)]
 pub fn encrypt_client_payload(
     context: &Context,
     method: CipherKind,
     key: &[u8],
+    transport_xor_key: Option<&[u8]>,
     addr: &Address,
     control: &UdpSocketControlData,
     identity_keys: &[Bytes],
@@ -99,6 +115,8 @@ pub fn encrypt_client_payload(
             encrypt_client_payload_aead_2022(context, method, key, addr, control, identity_keys, payload, dst)
         }
     }
+
+    apply_xor(dst, transport_xor_key);
 }
 
 /// Encrypt `Server -> Client` payload into ShadowSocks UDP encrypted packet
@@ -106,6 +124,7 @@ pub fn encrypt_server_payload(
     context: &Context,
     method: CipherKind,
     key: &[u8],
+    transport_xor_key: Option<&[u8]>,
     addr: &Address,
     control: &UdpSocketControlData,
     payload: &[u8],
@@ -133,6 +152,8 @@ pub fn encrypt_server_payload(
         #[cfg(feature = "aead-cipher-2022")]
         CipherCategory::Aead2022 => encrypt_server_payload_aead_2022(context, method, key, addr, control, payload, dst),
     }
+
+    apply_xor(dst, transport_xor_key);
 }
 
 /// Decrypt `Client -> Server` payload from ShadowSocks UDP encrypted packet
@@ -141,8 +162,11 @@ pub fn decrypt_client_payload(
     method: CipherKind,
     key: &[u8],
     payload: &mut [u8],
+    transport_xor_key: Option<&[u8]>,
     user_manager: Option<&ServerUserManager>,
 ) -> ProtocolResult<(usize, Address, Option<UdpSocketControlData>)> {
+    apply_xor(payload, transport_xor_key);
+
     match method.category() {
         CipherCategory::None => {
             let _ = context;
@@ -186,7 +210,10 @@ pub fn decrypt_server_payload(
     method: CipherKind,
     key: &[u8],
     payload: &mut [u8],
+    transport_xor_key: Option<&[u8]>,
 ) -> ProtocolResult<(usize, Address, Option<UdpSocketControlData>)> {
+    apply_xor(payload, transport_xor_key);
+
     match method.category() {
         CipherCategory::None => {
             let _ = context;
@@ -215,5 +242,20 @@ pub fn decrypt_server_payload(
         CipherCategory::Aead2022 => decrypt_server_payload_aead_2022(context, method, key, payload)
             .map(|(n, a, c)| (n, a, Some(c)))
             .map_err(Into::into),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apply_xor;
+
+    #[test]
+    fn apply_xor_roundtrip() {
+        let mut payload = b"hello udp".to_vec();
+        apply_xor(&mut payload, Some(b"xy"));
+        assert_ne!(&payload, b"hello udp");
+
+        apply_xor(&mut payload, Some(b"xy"));
+        assert_eq!(&payload, b"hello udp");
     }
 }

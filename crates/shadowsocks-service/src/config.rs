@@ -318,6 +318,8 @@ struct SSConfig {
     password: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "xor_key")]
+    transport_xor_key: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     plugin: Option<String>,
@@ -541,6 +543,8 @@ struct SSServerExtConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     password: Option<String>,
     method: String,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "xor_key")]
+    transport_xor_key: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     users: Option<Vec<SSServerUserConfig>>,
@@ -2209,6 +2213,10 @@ impl Config {
                     nsvr.set_timeout(timeout);
                 }
 
+                if let Some(transport_xor_key) = config.transport_xor_key {
+                    nsvr.set_transport_xor_key(transport_xor_key.into_bytes());
+                }
+
                 nconfig.server.push(ServerInstanceConfig::with_server_config(nsvr));
             }
             (None, None, None, Some(_)) if config_type.is_manager() => {
@@ -2354,6 +2362,10 @@ impl Config {
 
                 if let Some(timeout) = config.timeout.map(Duration::from_secs) {
                     nsvr.set_timeout(timeout);
+                }
+
+                if let Some(transport_xor_key) = svr.transport_xor_key {
+                    nsvr.set_transport_xor_key(transport_xor_key.into_bytes());
                 }
 
                 if let Some(remarks) = svr.remarks {
@@ -3165,6 +3177,9 @@ impl fmt::Display for Config {
                 } else {
                     Some(svr.password().to_string())
                 };
+                jconf.transport_xor_key = svr
+                    .transport_xor_key()
+                    .map(|key| String::from_utf8_lossy(key).into_owned());
                 jconf.plugin = svr.plugin().map(|p| p.plugin.to_string());
                 jconf.plugin_opts = svr.plugin().and_then(|p| p.plugin_opts.clone());
                 jconf.plugin_args = svr.plugin().and_then(|p| {
@@ -3212,6 +3227,9 @@ impl fmt::Display for Config {
                             Some(svr.password().to_string())
                         },
                         method: svr.method().to_string(),
+                        transport_xor_key: svr
+                            .transport_xor_key()
+                            .map(|key| String::from_utf8_lossy(key).into_owned()),
                         users: svr.user_manager().map(|m| {
                             let mut vu = Vec::new();
                             for u in m.users_iter() {
@@ -3435,7 +3453,7 @@ pub fn read_variable_field_value(value: &str) -> Cow<'_, str> {
 
 #[cfg(test)]
 mod tests {
-    use super::OutboundProxy;
+    use super::{Config, ConfigType, OutboundProxy};
 
     #[test]
     fn outbound_proxy_url_without_auth() {
@@ -3454,5 +3472,30 @@ mod tests {
         let auth = proxy.auth.expect("auth");
         assert_eq!(auth.username, "user");
         assert_eq!(auth.password, "pass");
+    }
+
+    #[test]
+    fn load_server_transport_xor_key() {
+        let config = Config::load_from_str(
+            r#"{
+                "servers": [
+                    {
+                        "server": "127.0.0.1",
+                        "server_port": 8388,
+                        "password": "secret",
+                        "method": "none",
+                        "transport_xor_key": "xor-layer"
+                    }
+                ]
+            }"#,
+            ConfigType::Local,
+        )
+        .expect("config");
+
+        assert_eq!(config.server.len(), 1);
+        assert_eq!(
+            config.server[0].config.transport_xor_key(),
+            Some("xor-layer".as_bytes())
+        );
     }
 }

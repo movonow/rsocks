@@ -48,6 +48,93 @@ pub enum ProtocolError {
 /// TCP shadowsocks protocol result
 pub type ProtocolResult<T> = Result<T, ProtocolError>;
 
+#[derive(Debug)]
+struct XorStream<S> {
+    stream: S,
+    key: Box<[u8]>,
+    read_pos: usize,
+    write_pos: usize,
+}
+
+impl<S> XorStream<S> {
+    fn new(stream: S, key: Option<&[u8]>) -> Self {
+        Self {
+            stream,
+            key: key.unwrap_or_default().to_vec().into_boxed_slice(),
+            read_pos: 0,
+            write_pos: 0,
+        }
+    }
+
+    fn into_inner(self) -> S {
+        self.stream
+    }
+
+    fn get_ref(&self) -> &S {
+        &self.stream
+    }
+
+    fn get_mut(&mut self) -> &mut S {
+        &mut self.stream
+    }
+
+    fn apply_xor(&self, pos: usize, buf: &mut [u8]) {
+        if self.key.is_empty() {
+            return;
+        }
+
+        for (idx, byte) in buf.iter_mut().enumerate() {
+            *byte ^= self.key[(pos + idx) % self.key.len()];
+        }
+    }
+}
+
+impl<S> AsyncRead for XorStream<S>
+where
+    S: AsyncRead + Unpin,
+{
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+        let filled_before = buf.filled().len();
+        ready!(Pin::new(&mut self.stream).poll_read(cx, buf))?;
+
+        let filled_after = buf.filled().len();
+        if filled_after > filled_before {
+            let read_pos = self.read_pos;
+            let filled = buf.filled_mut();
+            self.apply_xor(read_pos, &mut filled[filled_before..filled_after]);
+            self.read_pos += filled_after - filled_before;
+        }
+
+        Ok(()).into()
+    }
+}
+
+impl<S> AsyncWrite for XorStream<S>
+where
+    S: AsyncWrite + Unpin,
+{
+    fn poll_write(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        if self.key.is_empty() {
+            return Pin::new(&mut self.stream).poll_write(cx, buf);
+        }
+
+        let mut xor_buf = buf.to_vec();
+        self.apply_xor(self.write_pos, &mut xor_buf);
+
+        let written = ready!(Pin::new(&mut self.stream).poll_write(cx, &xor_buf))?;
+        self.write_pos += written;
+        Ok(written).into()
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.stream).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.stream).poll_shutdown(cx)
+    }
+}
+
 impl From<ProtocolError> for io::Error {
     fn from(e: ProtocolError) -> Self {
         match e {
@@ -329,7 +416,7 @@ impl EncryptedWriter {
 
 /// A bidirectional stream for read/write encrypted data in shadowsocks' tunnel
 pub struct CryptoStream<S> {
-    stream: S,
+    stream: XorStream<S>,
     dec: DecryptedReader,
     enc: EncryptedWriter,
     method: CipherKind,
@@ -347,9 +434,25 @@ impl<S> fmt::Debug for CryptoStream<S> {
 
 impl<S> CryptoStream<S> {
     /// Create a new CryptoStream with the underlying stream connection
-    pub fn from_stream(context: &Context, stream: S, stream_ty: StreamType, method: CipherKind, key: &[u8]) -> Self {
+    pub fn from_stream(
+        context: &Context,
+        stream: S,
+        stream_ty: StreamType,
+        method: CipherKind,
+        key: &[u8],
+        transport_xor_key: Option<&[u8]>,
+    ) -> Self {
         const EMPTY_IDENTITY: [Bytes; 0] = [];
-        Self::from_stream_with_identity(context, stream, stream_ty, method, key, &EMPTY_IDENTITY, None)
+        Self::from_stream_with_identity(
+            context,
+            stream,
+            stream_ty,
+            method,
+            key,
+            transport_xor_key,
+            &EMPTY_IDENTITY,
+            None,
+        )
     }
 
     /// Create a new CryptoStream with the underlying stream connection
@@ -359,10 +462,12 @@ impl<S> CryptoStream<S> {
         stream_ty: StreamType,
         method: CipherKind,
         key: &[u8],
+        transport_xor_key: Option<&[u8]>,
         identity_keys: &[Bytes],
         user_manager: Option<Arc<ServerUserManager>>,
     ) -> Self {
         let category = method.category();
+        let stream = XorStream::new(stream, transport_xor_key);
 
         if category == CipherCategory::None {
             // Fast-path for none cipher
@@ -419,7 +524,7 @@ impl<S> CryptoStream<S> {
         }
     }
 
-    fn new_none(stream: S, method: CipherKind) -> Self {
+    fn new_none(stream: XorStream<S>, method: CipherKind) -> Self {
         Self {
             stream,
             dec: DecryptedReader::None,
@@ -431,17 +536,17 @@ impl<S> CryptoStream<S> {
 
     /// Return a reference to the underlying stream
     pub fn get_ref(&self) -> &S {
-        &self.stream
+        self.stream.get_ref()
     }
 
     /// Return a mutable reference to the underlying stream
     pub fn get_mut(&mut self) -> &mut S {
-        &mut self.stream
+        self.stream.get_mut()
     }
 
     /// Consume the CryptoStream and return the internal stream instance
     pub fn into_inner(self) -> S {
-        self.stream
+        self.stream.into_inner()
     }
 
     /// Get received IV (Stream) or Salt (AEAD, AEAD2022)
@@ -595,5 +700,30 @@ where
     #[inline]
     pub fn poll_shutdown(&mut self, cx: &mut task::Context<'_>) -> Poll<ProtocolResult<()>> {
         Pin::new(&mut self.stream).poll_shutdown(cx).map_err(Into::into)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt, duplex};
+
+    use super::XorStream;
+
+    #[tokio::test]
+    async fn xor_stream_roundtrip_keeps_stream_offsets() {
+        let (client, mut server) = duplex(64);
+        let mut xor_client = XorStream::new(client, Some(b"xy"));
+
+        xor_client.write_all(b"abcdef").await.expect("write");
+
+        let mut encrypted = [0u8; 6];
+        server.read_exact(&mut encrypted).await.expect("read");
+        assert_eq!(encrypted, [25, 27, 27, 29, 29, 31]);
+
+        server.write_all(&[9, 11, 11, 13, 13, 15]).await.expect("write");
+
+        let mut plain = [0u8; 6];
+        xor_client.read_exact(&mut plain).await.expect("read");
+        assert_eq!(&plain, b"qrstuv");
     }
 }
