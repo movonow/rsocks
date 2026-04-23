@@ -301,6 +301,9 @@ Create a ShadowSocks' configuration file. Example
     "server_port": 8388,
     "password": "rwQc8qPXVsRpGx3uW+Y3Lj4Y42yF9Bs0xg1pmx8/+bo=",
     "method": "aes-256-gcm",
+    // OPTIONAL. Apply an extra XOR transform on transport bytes.
+    // Must be the same on both client and server.
+    "transport_xor_key": "xor-layer",
     // ONLY FOR `sslocal`
     // Delete these lines if you are running `ssserver` or `ssmanager`
     "local_address": "127.0.0.1",
@@ -322,6 +325,7 @@ In shadowsocks-rust, we also have an extended configuration file format, which i
             "server_port": 8388,
             "password": "rwQc8qPXVsRpGx3uW+Y3Lj4Y42yF9Bs0xg1pmx8/+bo=",
             "method": "aes-256-gcm",
+            "transport_xor_key": "xor-layer",
             "timeout": 7200
         },
         {
@@ -720,6 +724,9 @@ Example configuration:
     "server_port": 8388,
     "method": "aes-256-gcm",
     "password": "your-password",
+    // OPTIONAL. Apply an extra XOR transform on transport bytes.
+    // Must be identical on both sides. `xor_key` is also accepted as an alias.
+    "transport_xor_key": "xor-layer",
     "plugin": "v2ray-plugin",
     "plugin_opts": "mode=quic;host=github.com",
     "plugin_args": [
@@ -745,6 +752,7 @@ Example configuration:
             "port": 8389,
             "method": "aes-256-gcm",
             "password": "your-password",
+            "transport_xor_key": "xor-layer",
             "plugin": "...",
             "plugin_opts": "...",
             "plugin_args": [],
